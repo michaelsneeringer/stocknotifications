@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Daily Stock Chart Email Notification.
+  Sends a $SPX chart image via email every day at 6:00 AM Pacific Time
+  using a Lambda function triggered by EventBridge Scheduler.
+
+Parameters:
+  GmailAppPassword:
+    Type: String
+    NoEcho: true
+    Description: Gmail App Password for sending emails (generate at https://myaccount.google.com/apppasswords)
+
+  ChartImageUrl:
+    Type: String
+    Default: "https://stockcharts.com/c-sc/sc?s=$SPX&p=D&id=p95318658468"
+    Description: Direct URL to the stock chart image
+
+  SenderEmail:
+    Type: String
+    Default: "michaelsneeringer@gmail.com"
+    Description: Gmail address to send from
+
+  RecipientEmail:
+    Type: String
+    Default: "michaelsneeringer@me.com"
+    Description: Email address to send the chart to
+
+Resources:
+  # --- Secrets Manager for Gmail App Password ---
+  GmailSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: stock-chart-gmail-app-password
+      Description: Gmail App Password for daily stock chart email
+      SecretString: !Sub '{"gmail_app_password": "${GmailAppPassword}"}'
+
+  # --- IAM Role for Lambda ---
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: stock-chart-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref GmailSecret
+
+  # --- Lambda Function ---
+  StockChartFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: daily-stock-chart-email
+      Description: Fetches a stock chart image and sends it via email
+      Runtime: python3.12
+      Handler: lambda_function.handler
+      Code: ./lambda/
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          SECRET_ARN: !Ref GmailSecret
+          CHART_IMAGE_URL: !Ref ChartImageUrl
+          SENDER_EMAIL: !Ref SenderEmail
+          RECIPIENT_EMAIL: !Ref RecipientEmail
+
+  # --- Permission for EventBridge Scheduler to invoke Lambda ---
+  SchedulerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StockChartFunction
+      Action: lambda:InvokeFunction
+      Principal: scheduler.amazonaws.com
+      SourceArn: !GetAtt DailySchedule.Arn
+
+  # --- IAM Role for EventBridge Scheduler ---
+  SchedulerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: stock-chart-scheduler-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt StockChartFunction.Arn
+
+  # --- EventBridge Scheduler (supports timezone-aware scheduling) ---
+  DailySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: daily-stock-chart-6am-pacific
+      Description: Triggers daily stock chart email at 6:00 AM Pacific Time
+      ScheduleExpression: "cron(0 6 * * ? *)"
+      ScheduleExpressionTimezone: "America/Los_Angeles"
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt StockChartFunction.Arn
+        RoleArn: !GetAtt SchedulerExecutionRole.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt StockChartFunction.Arn
+
+  ScheduleArn:
+    Description: ARN of the EventBridge Schedule
+    Value: !GetAtt DailySchedule.Arn
+
+  SecretArn:
+    Description: ARN of the Secrets Manager secret
+    Value: !Ref GmailSecret
