@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Daily Stock Chart Email Notification.
-  Sends a $SPX chart image via email every day at 6:00 AM Pacific Time
+  Sends a $SPX chart image via email on weekdays at 6:45 AM Pacific Time
   using a Lambda function triggered by EventBridge Scheduler.
 
 Parameters:
@@ -111,9 +111,9 @@ Resources:
   DailySchedule:
     Type: AWS::Scheduler::Schedule
     Properties:
-      Name: daily-stock-chart-6am-pacific
-      Description: Triggers daily stock chart email at 6:00 AM Pacific Time
-      ScheduleExpression: "cron(0 6 * * ? *)"
+      Name: daily-stock-chart-645am-pacific
+      Description: Triggers daily stock chart email at 6:45 AM Pacific Time on weekdays
+      ScheduleExpression: "cron(45 6 ? * MON-FRI *)"
       ScheduleExpressionTimezone: "America/Los_Angeles"
       FlexibleTimeWindow:
         Mode: "OFF"
